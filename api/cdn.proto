@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+option go_package = "github.com/muxable/cdn/api";
+
+package api;
+
+service CDN {
+  rpc Resolve(ResolveRequest) returns (ResolveResponse) {}
+  rpc Traverse(TraverseRequest) returns (TraverseResponse) {}
+  rpc Publish(stream PublishRequest) returns (stream PublishResponse) {}
+  rpc Subscribe(stream SubscribeRequest) returns (stream SubscribeResponse) {}
+}
+
+message ResolveRequest {
+}
+
+message ResolveResponse {
+  string cname = 1; // the canonical hostname, used for identifying the server behind an anycast IP.
+}
+
+message TraverseRequest {
+  string stream_id = 1;
+}
+
+message TraverseResponse {
+  message Subscriber {
+    string cname = 1;
+    int64 latency = 2; // in microseconds
+  }
+
+  repeated Subscriber subscribers = 1;
+  int64 requested_max_subscribers = 2; // the requested max number of subscribers.
+}
+
+message Signal {
+  oneof payload {
+    string offer_sdp = 1;
+    string answer_sdp = 2;
+    string trickle = 3;
+  }
+}
+
+message SubscribeRequest {
+  message Subscription {
+    string stream_id = 1;  // subscribe to a published stream id.
+    string cname = 2; // the canonical hostname of the subscriber that the server will forward on for verifications.
+    int64 reported_latency = 3; // the estimated half RTT latency of the subscriber.
+  }
+
+  oneof operation {
+    Subscription subscription = 1;
+    Signal signal = 2;     // WebRTC signalling.
+  }
+}
+
+message SubscribeResponse {
+    Signal signal = 1;
+}
+
+message PublishRequest {
+    Signal signal = 1;
+}
+
+message PublishResponse {
+    oneof operation {
+        string stream_id = 1;
+        Signal signal = 2;
+    }
+}
