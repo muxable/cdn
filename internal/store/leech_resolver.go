@@ -47,5 +47,19 @@ func traverse(ctx context.Context, publisherAddr, streamId string, totalLatency 
 	}
 
 	// otherwise, we need to traverse to each of the subscribers, choosing the one with the lowest total latency.
-
+	// note that the early subscription choice is based on the triangle inequality, which is not necessarily true but a meaningful
+	// heuristic especially among cloud networks.
+	//
+	// we can perhaps tune this heuristic more, but more research is needed.
+	var bestResult *Result
+	for _, subscriber := range response.Subscribers {
+		subResult, err := traverse(ctx, subscriber.Cname, streamId, totalLatency+(time.Duration(subscriber.Latency) * time.Microsecond))
+		if err != nil {
+			continue
+		}
+		if  bestResult == nil || subResult.IncrementalLatency+subResult.PublisherLatency < bestResult.IncrementalLatency+bestResult.PublisherLatency {
+			bestResult = subResult
+		}
+	}
+	return bestResult, nil
 }

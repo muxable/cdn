@@ -6,8 +6,10 @@ import (
 
 	"github.com/muxable/cdn/api"
 	"github.com/muxable/cdn/internal/store"
+	"github.com/muxable/cdn/pkg/cdn"
 	"github.com/pion/webrtc/v3"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 type Source struct {
@@ -228,6 +230,25 @@ func (s *CDNServer) Subscribe(conn api.CDN_SubscribeServer) error {
 
 		switch operation := in.Operation.(type) {
 		case *api.SubscribeRequest_StreamId:
+			if localMulticaster.HasTrack(operation.StreamId) {
+				tl, err := localMulticaster.GetTrack(operation.StreamId)
+				if err != nil {
+					return err
+				}
+
+				rtpSender, err := peerConnection.AddTrack(tl)
+				if err != nil {
+					return err
+				}
+
+				go func() {
+					for {
+						if _, _, err := rtpSender.ReadRTCP(); err != nil {
+							return
+						}
+					}
+				}()
+			}
 			publisher, err := s.publisherStore.Get(operation.StreamId)
 			if err != nil {
 				return err
@@ -237,6 +258,35 @@ func (s *CDNServer) Subscribe(conn api.CDN_SubscribeServer) error {
 			if err != nil {
 				return err
 			}
+
+			// create a new peer connection and send a new subscribe request to the leech target.
+			leechConn, err := grpc.Dial(leechFrom.LeecherAddr, grpc.WithTransportCredentials(insecure.NewTransportCredentials()))
+			if err != nil {
+				return err
+			}
+			client := cdn.NewClient(conn.Context(), leechConn)
+			tr, err := client.Subscribe(operation.StreamId)
+			if err != nil {
+				return err
+			}
+
+			// forward the remote track to the subscriber.
+			tl, err := webrtc.NewTrackLocalStaticRTP(tr.Codec().RTPCodecCapability, tr.ID(), tr.StreamID())
+			if err != nil {
+				return err
+			}
+
+			go func() {
+				for {
+					p, _, err := tr.ReadRTP()
+					if err != nil {
+						return
+					}
+					if err := tl.WriteRTP(p); err != nil {
+						return
+					}
+				}
+			}()
 
 			rtpSender, err := peerConnection.AddTrack(tl)
 			if err != nil {
@@ -250,6 +300,7 @@ func (s *CDNServer) Subscribe(conn api.CDN_SubscribeServer) error {
 					}
 				}
 			}()
+
 		case *api.SubscribeRequest_Signal:
 			switch payload := operation.Signal.Payload.(type) {
 			case *api.Signal_OfferSdp:
