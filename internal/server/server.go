@@ -60,9 +60,10 @@ func ServeCDN(host, port string, probe *string) error {
 	if probe != nil {
 		probeAddr, err := store.Probe(context.Background(), *probe)
 		if err != nil {
-			zap.L().Error("failed to probe", zap.String("probe", *probe), zap.Error(err))
+			zap.L().Warn("failed to probe", zap.String("probe", *probe), zap.Error(err))
+		} else {
+			bootstrapAddrs = append(bootstrapAddrs, probeAddr)
 		}
-		bootstrapAddrs = append(bootstrapAddrs, probeAddr)
 	}
 
 	dht, err := store.NewDHTStore(context.Background(), dhtConn, bootstrapAddrs...)
