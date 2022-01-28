@@ -4,13 +4,14 @@ go 1.17
 
 require (
 	github.com/anacrolix/dht/v2 v2.15.1
-	github.com/anacrolix/torrent v1.35.1-0.20211104090255-eaeb38b18c6a
 	github.com/blendle/zapdriver v1.3.1
 	github.com/pion/webrtc/v3 v3.1.16
 	go.uber.org/zap v1.20.0
 	google.golang.org/grpc v1.43.0
 	google.golang.org/protobuf v1.27.1
 )
+
+require github.com/anacrolix/torrent v1.35.1-0.20211104090255-eaeb38b18c6a
 
 require (
 	github.com/anacrolix/chansync v0.3.0 // indirect
@@ -36,7 +37,8 @@ require (
 	github.com/pion/mdns v0.0.5 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
 	github.com/pion/rtcp v1.2.9 // indirect
-	github.com/pion/rtp v1.7.4 // indirect
+	github.com/pion/rtp v1.7.4
+	github.com/pion/rtpio v0.1.4
 	github.com/pion/sctp v1.8.2 // indirect
 	github.com/pion/sdp/v3 v3.0.4 // indirect
 	github.com/pion/srtp/v2 v2.0.5 // indirect

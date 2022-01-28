@@ -3,6 +3,8 @@ package store
 import (
 	"fmt"
 	"os"
+
+	"go.uber.org/zap"
 )
 
 // GetLocalAddress returns the local address of the host.
@@ -14,5 +16,6 @@ func GetLocalAddress() (string, error) {
 		return fmt.Sprintf("%s.vm.%s.internal", flyAppName, flyAllocID), nil
 	}
 
-	return "", fmt.Errorf("unable to determine local address")
+	zap.L().Warn("could not resolve address, assuming local")
+	return "127.0.0.1", nil
 }

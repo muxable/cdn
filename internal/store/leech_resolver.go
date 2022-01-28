@@ -53,7 +53,7 @@ func traverse(ctx context.Context, publisherAddr, streamId string, totalLatency 
 	// we can perhaps tune this heuristic more, but more research is needed.
 	var bestResult *Result
 	for _, subscriber := range response.Subscribers {
-		subResult, err := traverse(ctx, subscriber.Cname, streamId, totalLatency+(time.Duration(subscriber.Latency) * time.Microsecond))
+		subResult, err := traverse(ctx, subscriber.Cname, streamId, totalLatency+subscriber.Latency.AsDuration())
 		if err != nil {
 			continue
 		}

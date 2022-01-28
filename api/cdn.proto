@@ -2,10 +2,13 @@ syntax = "proto3";
 
 option go_package = "github.com/muxable/cdn/api";
 
+import "google/protobuf/duration.proto";
+import "google/protobuf/empty.proto";
+
 package api;
 
 service CDN {
-  rpc Resolve(ResolveRequest) returns (ResolveResponse) {}
+  rpc Resolve(google.protobuf.Empty) returns (ResolveResponse) {}
   rpc Traverse(TraverseRequest) returns (TraverseResponse) {}
   rpc Publish(stream PublishRequest) returns (stream PublishResponse) {}
   rpc Subscribe(stream SubscribeRequest) returns (stream SubscribeResponse) {}
@@ -25,7 +28,7 @@ message TraverseRequest {
 message TraverseResponse {
   message Subscriber {
     string cname = 1;
-    int64 latency = 2; // in microseconds
+    google.protobuf.Duration latency = 2;
   }
 
   repeated Subscriber subscribers = 1;
@@ -40,11 +43,20 @@ message Signal {
   }
 }
 
+message Track {
+  string id = 1;
+  string stream_id = 2;
+  string rtp_stream_id = 3;
+  string key = 4;
+  // for debugging, this is the path through the DHT taken to send this track.
+  repeated string trace = 5;
+}
+
 message SubscribeRequest {
   message Subscription {
-    string stream_id = 1;  // subscribe to a published stream id.
+    string key = 1;  // subscribe to a published stream id.
     string cname = 2; // the canonical hostname of the subscriber that the server will forward on for verifications.
-    int64 reported_latency = 3; // the estimated half RTT latency of the subscriber.
+    google.protobuf.Duration reported_latency = 3; // the estimated half RTT latency of the subscriber.
   }
 
   oneof operation {
@@ -54,7 +66,10 @@ message SubscribeRequest {
 }
 
 message SubscribeResponse {
-    Signal signal = 1;
+  oneof operation {
+    Track track = 1;
+    Signal signal = 2;
+  }
 }
 
 message PublishRequest {
@@ -63,7 +78,7 @@ message PublishRequest {
 
 message PublishResponse {
     oneof operation {
-        string stream_id = 1;
+        Track track = 1;
         Signal signal = 2;
     }
 }
