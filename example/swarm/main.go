@@ -28,8 +28,8 @@ func main() {
 		if i > 0 {
 			// pick a random previous node to bootstrap from
 			j := rand.Intn(i)
-			bootstrap := fmt.Sprintf("127.0.0.1:%d", j+50051)
-			go server.ServeCDN("127.0.0.1", port, &bootstrap)
+			probe := fmt.Sprintf("127.0.0.1:%d", j+50051)
+			go server.ServeCDN("127.0.0.1", port, &probe)
 		} else {
 			go server.ServeCDN("127.0.0.1", port, nil)
 		}

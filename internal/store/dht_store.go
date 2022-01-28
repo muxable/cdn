@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
-	"log"
 	"net"
 	"time"
 
@@ -20,16 +19,16 @@ type DHTStore struct {
 	ctx context.Context
 }
 
-func NewDHTStore(ctx context.Context, conn net.PacketConn, bootstrap *net.UDPAddr) (*DHTStore, error) {
+func NewDHTStore(ctx context.Context, conn net.PacketConn, bootstrapAddrs ...*net.UDPAddr) (*DHTStore, error) {
 	server, err := dht.NewServer(&dht.ServerConfig{
 		NoSecurity: true,
 		Conn:       conn,
 		StartingNodes: func() ([]dht.Addr, error) {
-			if bootstrap == nil {
-				zap.L().Warn("no bootstrap node provided")
-				return nil, nil
+			var addrs []dht.Addr
+			for _, addr := range bootstrapAddrs {
+				addrs = append(addrs, dht.NewAddr(addr))
 			}
-			return []dht.Addr{dht.NewAddr(bootstrap)}, nil
+			return addrs, nil
 		},
 		DefaultWant: []krpc.Want{krpc.WantNodes, krpc.WantNodes6},
 		Store:       bep44.NewMemory(),
@@ -39,10 +38,8 @@ func NewDHTStore(ctx context.Context, conn net.PacketConn, bootstrap *net.UDPAdd
 	if err != nil {
 		return nil, err
 	}
-	if bootstrap != nil {
-		stats, err := server.Bootstrap()
-		log.Printf("%#v", stats)
-		if err != nil {
+	if len(bootstrapAddrs) > 0 {
+		if _, err := server.Bootstrap(); err != nil {
 			return nil, err
 		}
 	}
@@ -51,7 +48,7 @@ func NewDHTStore(ctx context.Context, conn net.PacketConn, bootstrap *net.UDPAdd
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(time.Second):
+			case <-time.After(10 * time.Second):
 				stats := server.Stats()
 				zap.L().Debug("dht stats", zap.Any("stats", stats))
 			}
@@ -95,4 +92,10 @@ func (s *DHTStore) Put(key, value string) error {
 func (s *DHTStore) Del(key string) error {
 	// TODO: implement
 	return nil
+}
+
+func (s *DHTStore) AddNode(addr *net.UDPAddr) error {
+	na := krpc.NodeAddr{}
+	na.FromUDPAddr(addr)
+	return s.Server.AddNode(krpc.NodeInfo{Addr: na})
 }

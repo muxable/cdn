@@ -43,7 +43,7 @@ func NewCDNServer(config Configuration) *CDNServer {
 	}
 }
 
-func ServeCDN(host, port string, bootstrap *string) error {
+func ServeCDN(host, port string, probe *string) error {
 	addr := fmt.Sprintf("%s:%s", host, port)
 
 	grpcConn, err := net.Listen("tcp", addr)
@@ -51,20 +51,21 @@ func ServeCDN(host, port string, bootstrap *string) error {
 		panic(err)
 	}
 
-	var bootstrapAddr *net.UDPAddr
-	if bootstrap != nil {
-		bootstrapAddr, err = net.ResolveUDPAddr("udp", *bootstrap)
-		if err != nil {
-			panic(err)
-		}
-	}
-
 	dhtConn, err := net.ListenPacket("udp", addr)
 	if err != nil {
 		panic(err)
 	}
+	
+	var bootstrapAddrs []*net.UDPAddr
+	if probe != nil {
+		probeAddr, err := store.Probe(context.Background(), *probe)
+		if err != nil {
+			zap.L().Error("failed to probe", zap.String("probe", *probe), zap.Error(err))
+		}
+		bootstrapAddrs = append(bootstrapAddrs, probeAddr)
+	}
 
-	dht, err := store.NewDHTStore(context.Background(), dhtConn, bootstrapAddr)
+	dht, err := store.NewDHTStore(context.Background(), dhtConn, bootstrapAddrs...)
 	if err != nil {
 		panic(err)
 	}
@@ -91,6 +92,9 @@ func ServeCDN(host, port string, bootstrap *string) error {
 	grpc_health_v1.RegisterHealthServer(grpcServer, health.NewServer())
 
 	zap.L().Info("starting cdn server", zap.String("addr", addr))
+
+	// TODO: in theory we can also probe periodically here, but since it's guaranteed the network
+	// it might not be necessary. does it actually work?
 
 	return grpcServer.Serve(grpcConn)
 }

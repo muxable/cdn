@@ -18,7 +18,7 @@ func logger() (*zap.Logger, error) {
 }
 
 func main() {
-	bootstrap := flag.String("bootstrap", "", "bootstrap node")
+	probe := flag.String("probe", "", "probe address")
 	flag.Parse()
 
 	logger, err := logger()
@@ -34,7 +34,7 @@ func main() {
 		port = "50051"
 	}
 
-	if err := server.ServeCDN("0.0.0.0", port, bootstrap); err != nil {
+	if err := server.ServeCDN("0.0.0.0", port, probe); err != nil {
 		panic(err)
 	}
 }

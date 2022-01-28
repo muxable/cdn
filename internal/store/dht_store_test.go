@@ -12,7 +12,7 @@ func TestDHTStore_Simple(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s1, err := NewDHTStore(context.Background(), s1conn, nil)
+	s1, err := NewDHTStore(context.Background(), s1conn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,8 +21,11 @@ func TestDHTStore_Simple(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s2, err := NewDHTStore(context.Background(), s2conn, s1.Addr())
+	s2, err := NewDHTStore(context.Background(), s2conn)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s2.AddNode(s1.Addr().(*net.UDPAddr)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -54,7 +57,7 @@ func TestDHTStore_RouteThroughThird(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s1, err := NewDHTStore(context.Background(), s1conn, nil)
+	s1, err := NewDHTStore(context.Background(), s1conn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,8 +66,11 @@ func TestDHTStore_RouteThroughThird(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s2, err := NewDHTStore(context.Background(), s2conn, s1.Addr())
+	s2, err := NewDHTStore(context.Background(), s2conn)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s2.AddNode(s1.Addr().(*net.UDPAddr)); err != nil {
 		t.Fatal(err)
 	}
 	
@@ -72,12 +78,15 @@ func TestDHTStore_RouteThroughThird(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s3, err := NewDHTStore(context.Background(), s3conn, s2.Addr())
+	s3, err := NewDHTStore(context.Background(), s3conn)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := s3.AddNode(s2.Addr().(*net.UDPAddr)); err != nil {
+		t.Fatal(err)
+	}
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(1 * time.Second)
 
 	nodes, err := s1.TraversalStartingNodes()
 	if err != nil {
@@ -151,7 +160,7 @@ func TestDHTStore_PublisherDestroyed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s1, err := NewDHTStore(context.Background(), s1conn, nil)
+	s1, err := NewDHTStore(context.Background(), s1conn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,8 +169,11 @@ func TestDHTStore_PublisherDestroyed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s2, err := NewDHTStore(context.Background(), s2conn, s1.Addr())
+	s2, err := NewDHTStore(context.Background(), s2conn)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s2.AddNode(s1.Addr().(*net.UDPAddr)); err != nil {
 		t.Fatal(err)
 	}
 	
@@ -169,12 +181,15 @@ func TestDHTStore_PublisherDestroyed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s3, err := NewDHTStore(context.Background(), s3conn, s2.Addr())
+	s3, err := NewDHTStore(context.Background(), s3conn)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := s3.AddNode(s2.Addr().(*net.UDPAddr)); err != nil {
+		t.Fatal(err)
+	}
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(1 * time.Second)
 
 	nodes, err := s1.TraversalStartingNodes()
 	if err != nil {
