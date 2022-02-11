@@ -1,6 +1,8 @@
 package server
 
 import (
+	"fmt"
+
 	"github.com/muxable/cdn/api"
 	"github.com/muxable/cdn/internal/signal"
 	"github.com/muxable/cdn/internal/store"
@@ -112,7 +114,7 @@ func (s *CDNServer) Subscribe(conn api.CDN_SubscribeServer) error {
 						StreamId:    tl.StreamID(),
 						RtpStreamId: tl.RID(),
 						Key:         key,
-						Trace:       append(tl.Trace, s.config.InboundAddress),
+						Trace:       append(tl.Trace, fmt.Sprintf("%s[%s]", s.config.InboundAddress, store.GetTag())),
 					},
 				},
 			}); err != nil {
