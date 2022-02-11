@@ -1,6 +1,6 @@
-# fly.toml file generated for muxable-cdn on 2022-01-28T01:52:58-05:00
+# fly.toml file generated for muddy-flower-2237 on 2022-02-11T01:20:52-05:00
 
-app = "muxable-cdn"
+app = "muddy-flower-2237"
 
 kill_signal = "SIGINT"
 kill_timeout = 5
@@ -8,13 +8,8 @@ processes = []
 
 [env]
 
-[experimental]
-  allowed_public_ports = []
-  auto_rollback = true
-
 [[services]]
   internal_port = 50051
-  processes = ["cdn"]
   protocol = "tcp"
 
   [services.concurrency]
@@ -23,8 +18,7 @@ processes = []
     type = "connections"
 
   [[services.ports]]
-    handlers = ["tls"]
-    port = 443
+    port = 50051
 
   [[services.tcp_checks]]
     grace_period = "1s"
