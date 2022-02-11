@@ -29,11 +29,13 @@ func main() {
 			// pick a random previous node to bootstrap from
 			j := rand.Intn(i)
 			probe := fmt.Sprintf("127.0.0.1:%d", j+50051)
-			go server.ServeCDN("127.0.0.1", port, &probe)
+			go server.ServeCDN("127.0.0.1", port, probe)
 		} else {
-			go server.ServeCDN("127.0.0.1", port, nil)
+			go server.ServeCDN("127.0.0.1", port, "")
 		}
-		time.Sleep(100 * time.Millisecond)
+		// in order to guarantee a connected graph, we need to wait a bit
+		// to let each individual server start up.
+		time.Sleep(1 * time.Second)
 	}
 
 	select{}

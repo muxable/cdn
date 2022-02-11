@@ -43,24 +43,29 @@ func NewCDNServer(config Configuration) *CDNServer {
 	}
 }
 
-func ServeCDN(host, port string, probe *string) error {
+func ServeCDN(host, port string, probe string) error {
 	addr := fmt.Sprintf("%s:%s", host, port)
 
 	grpcConn, err := net.Listen("tcp", addr)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	dhtConn, err := net.ListenPacket("udp", addr)
 	if err != nil {
-		panic(err)
+		return err
+	}
+
+	udpAddr, err := net.ResolveUDPAddr("udp", "localhost:" + port)
+	if err != nil {
+		return err
 	}
 	
-	var bootstrapAddrs []*net.UDPAddr
-	if probe != nil {
-		probeAddr, err := store.Probe(context.Background(), *probe)
+	bootstrapAddrs := []*net.UDPAddr{udpAddr}
+	if probe != "" {
+		probeAddr, err := store.Probe(context.Background(), probe)
 		if err != nil {
-			zap.L().Warn("failed to probe", zap.String("probe", *probe), zap.Error(err))
+			zap.L().Warn("failed to probe", zap.String("probe", probe), zap.Error(err))
 		} else {
 			bootstrapAddrs = append(bootstrapAddrs, probeAddr)
 		}
@@ -68,14 +73,14 @@ func ServeCDN(host, port string, probe *string) error {
 
 	dht, err := store.NewDHTStore(context.Background(), dhtConn, bootstrapAddrs...)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	local := store.NewLocalTrackStore()
 
 	inboundAddr, err := store.GetLocalAddress()
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	grpcServer := grpc.NewServer()

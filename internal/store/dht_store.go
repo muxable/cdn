@@ -39,9 +39,11 @@ func NewDHTStore(ctx context.Context, conn net.PacketConn, bootstrapAddrs ...*ne
 		return nil, err
 	}
 	if len(bootstrapAddrs) > 0 {
-		if _, err := server.Bootstrap(); err != nil {
+		stats, err := server.Bootstrap()
+		if err != nil {
 			return nil, err
 		}
+		zap.L().Info("bootstrapped", zap.Any("stats", stats))
 	}
 	go func() {
 		for {

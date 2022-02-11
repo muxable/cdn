@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha1"
 	"errors"
-	"log"
 	"math"
 	"sync"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/anacrolix/dht/v2/krpc"
 	"github.com/anacrolix/dht/v2/traversal"
 	"github.com/anacrolix/torrent/bencode"
+	"go.uber.org/zap"
 )
 
 type GetResult struct {
@@ -26,13 +26,12 @@ func Get(ctx context.Context, target bep44.Target, s *dht.Server) (string, error
 	defer cancel()
 	vChan := make(chan GetResult)
 	op := traversal.Start(traversal.OperationInput{
-		Alpha:  15,
 		Target: target,
 		DoQuery: func(ctx context.Context, addr krpc.NodeAddr) traversal.QueryResult {
 			res := s.Get(ctx, dht.NewAddr(addr.UDP()), target, nil, dht.QueryRateLimiting{})
 			err := res.ToError()
 			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, dht.TransactionTimeout) {
-				// log.Printf("error querying %v: %v", addr, err)
+				zap.L().Error("error querying", zap.Stringer("addr", addr), zap.Error(err))
 			}
 			if r := res.Reply.R; r != nil {
 				rv := r.V
@@ -46,7 +45,7 @@ func Get(ctx context.Context, target bep44.Target, s *dht.Server) (string, error
 					case <-ctx.Done():
 					}
 				} else if rv != nil {
-					log.Printf("get response item hash didn't match target: %q", rv)
+					zap.L().Error("invalid signature from addr", zap.Stringer("addr", addr))
 				}
 			}
 			return res.TraversalQueryResult(addr)
@@ -87,7 +86,7 @@ func Put(
 			res := s.Get(ctx, dht.NewAddr(addr.UDP()), target, nil, dht.QueryRateLimiting{})
 			err := res.ToError()
 			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, dht.TransactionTimeout) {
-				// log.Printf("error querying %v: %v", addr, err)
+				zap.L().Error("error querying", zap.Stringer("addr", addr), zap.Error(err))
 			}
 			tqr := res.TraversalQueryResult(addr)
 			if tqr.ClosestData == nil {
@@ -109,6 +108,7 @@ func Put(
 		return ctx.Err()
 	}
 	var wg sync.WaitGroup
+	success := true
 	op.Closest().Range(func(elem k_nearest_nodes.Elem) {
 		wg.Add(1)
 		go func() {
@@ -117,12 +117,13 @@ func Put(
 			res := s.Put(ctx, dht.NewAddr(elem.Addr.UDP()), put, token, dht.QueryRateLimiting{})
 			err := res.ToError()
 			if err != nil {
-				log.Printf("error putting to %v [token=%q]: %v", elem.Addr, token, err)
-			} else {
-				log.Printf("put to %v [token=%q]", elem.Addr, token)
+				success = false
 			}
 		}()
 	})
 	wg.Wait()
+	if !success {
+		return errors.New("unable to save track, perhaps it already exists?")
+	}
 	return nil
 }

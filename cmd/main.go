@@ -34,7 +34,7 @@ func main() {
 		port = "50051"
 	}
 
-	if err := server.ServeCDN("0.0.0.0", port, probe); err != nil {
+	if err := server.ServeCDN("", port, *probe); err != nil {
 		panic(err)
 	}
 }

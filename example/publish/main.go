@@ -52,7 +52,7 @@ func main() {
 	}()
 
 	// Open a IVF file and start reading using our IVFReader
-	file, err := os.Open("../../test/input.ivf")
+	file, err := os.Open("test/input.ivf")
 	if err != nil {
 		panic(err)
 	}
