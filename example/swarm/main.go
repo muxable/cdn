@@ -6,7 +6,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/muxable/cdn/internal/server"
+	"github.com/muxable/cdn/pkg/server"
 	"go.uber.org/zap"
 )
 

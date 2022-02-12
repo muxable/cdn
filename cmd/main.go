@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/blendle/zapdriver"
-	"github.com/muxable/cdn/internal/server"
+	"github.com/muxable/cdn/pkg/server"
 	"go.uber.org/zap"
 )
 
