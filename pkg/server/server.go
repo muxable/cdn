@@ -99,8 +99,5 @@ func ServeCDN(host, port string, probe string) error {
 
 	zap.L().Info("starting cdn server", zap.String("addr", addr))
 
-	// TODO: in theory we can also probe periodically here, but since it's guaranteed the network
-	// it might not be necessary. does it actually work?
-
 	return grpcServer.Serve(grpcConn)
 }
