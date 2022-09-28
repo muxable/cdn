@@ -1,12 +1,13 @@
 package server
 
 import (
-	"crypto/sha256"
-	"fmt"
+	"context"
+	"errors"
 
+	"cloud.google.com/go/firestore"
 	"github.com/muxable/cdn/api"
-	"github.com/muxable/cdn/internal/signal"
 	"github.com/muxable/cdn/internal/store"
+	"github.com/muxable/signal/pkg/signal"
 	"github.com/pion/webrtc/v3"
 	"go.uber.org/zap"
 )
@@ -16,8 +17,11 @@ func (s *CDNServer) Publish(conn api.CDN_PublishServer) error {
 	if err != nil {
 		return err
 	}
+	defer peerConnection.Close()
 
-	signaller := signal.Negotiate(peerConnection)
+	signaller := signal.NewSignaller(peerConnection)
+
+	peerConnection.OnNegotiationNeeded(signaller.Renegotiate)
 
 	go func() {
 		for {
@@ -26,9 +30,7 @@ func (s *CDNServer) Publish(conn api.CDN_PublishServer) error {
 				zap.L().Error("failed to read signal", zap.Error(err))
 				return
 			}
-			if err := conn.Send(&api.PublishResponse{
-				Operation: &api.PublishResponse_Signal{Signal: signal},
-			}); err != nil {
+			if err := conn.Send(&api.PublishResponse{Signal: signal}); err != nil {
 				zap.L().Error("failed to send signal", zap.Error(err))
 				return
 			}
@@ -38,45 +40,57 @@ func (s *CDNServer) Publish(conn api.CDN_PublishServer) error {
 	peerConnection.OnTrack(func(tr *webrtc.TrackRemote, r *webrtc.RTPReceiver) {
 		zap.L().Info("track received", zap.String("kind", tr.Kind().String()))
 
+		ref := s.config.Firestore.Collection("streams").Doc(tr.StreamID())
+
+		// declare us as the publisher of this stream.
+		if err := s.config.Firestore.RunTransaction(conn.Context(), func(ctx context.Context, tx *firestore.Transaction) error {
+			doc, err := tx.Get(ref)
+			if err != nil && doc == nil {
+				return err
+			}
+			if doc.Exists() && doc.Data()["publisher"] != s.config.InboundAddress {
+				return errors.New("stream already published")
+			}
+			return tx.Set(ref, map[string]interface{}{
+				"publisher": s.config.InboundAddress,
+				"trackIds":  firestore.ArrayUnion(tr.ID()),
+				"updatedAt": firestore.ServerTimestamp,
+			}, firestore.MergeAll)
+		}); err != nil {
+			zap.L().Error("failed to declare publisher", zap.Error(err))
+			return
+		}
+
+		s.streamMutex.Lock()
+		s.linkedStreamIDs[tr.StreamID()] = true
+		s.streamMutex.Unlock()
+
 		go func() {
 			buf := make([]byte, 1500)
 			for {
 				if _, _, err := r.Read(buf); err != nil {
+					// remove the track id, use bg context to avoid cancellation.
+					if _, err := ref.Update(context.Background(), []firestore.Update{
+						{Path: "trackIds", Value: firestore.ArrayRemove(tr.ID())},
+						{Path: "updatedAt", Value: firestore.ServerTimestamp},
+					}); err != nil {
+						zap.L().Error("failed to declare publisher", zap.Error(err))
+					}
 					return
 				}
 			}
 		}()
 
-		// hex format this for ease of rendering and debugging.
-		key := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%s", tr.StreamID(), tr.ID(), tr.RID()))))
-
 		// save the track in the local store.
-		s.config.LocalStore.Put(key, &store.TrackRemote{TrackRemote: tr, Latency: 0}) // since this is the ingressor, the total latency is zero.
-
-		// announce to the swarm that we have this track.
-		if err := s.config.DHTStore.Put(key, s.config.InboundAddress); err != nil {
-			zap.L().Error("failed to store track", zap.Error(err))
+		if err := s.config.LocalStore.AddTrack(&store.TrackRemote{TrackRemote: tr}); err != nil {
+			zap.L().Error("failed to add track", zap.Error(err))
 			return
-		}
-
-		if err := conn.Send(&api.PublishResponse{
-			Operation: &api.PublishResponse_Track{
-				Track: &api.Track{
-					Id:          tr.ID(),
-					StreamId:    tr.StreamID(),
-					RtpStreamId: tr.RID(),
-					Key:         key,
-				},
-			},
-		}); err != nil {
-			zap.L().Error("failed to send stream id", zap.Error(err))
 		}
 	})
 
 	for {
 		in, err := conn.Recv()
 		if err != nil {
-			zap.L().Error("failed to receive", zap.Error(err))
 			return nil
 		}
 		if err := signaller.WriteSignal(in.Signal); err != nil {

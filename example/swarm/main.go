@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"math/rand"
 	"time"
 
 	"github.com/muxable/cdn/pkg/server"
@@ -11,7 +10,7 @@ import (
 )
 
 func main() {
-	size := flag.Int("size", 24, "number of nodes in the swarm to spawn")
+	size := flag.Int("size", 2, "number of nodes in the swarm to spawn")
 	flag.Parse()
 
 	logger, err := zap.NewDevelopment()
@@ -23,16 +22,7 @@ func main() {
 	defer undo()
 
 	for i := 0; i < *size; i++ {
-		port := fmt.Sprintf("%d", i+50051)
-		
-		if i > 0 {
-			// pick a random previous node to bootstrap from
-			j := rand.Intn(i)
-			probe := fmt.Sprintf("127.0.0.1:%d", j+50051)
-			go server.ServeCDN("127.0.0.1", port, probe)
-		} else {
-			go server.ServeCDN("127.0.0.1", port, "")
-		}
+		go server.ServeCDN(fmt.Sprintf("127.0.0.1:%d", i+50051))
 		// in order to guarantee a connected graph, we need to wait a bit
 		// to let each individual server start up.
 		time.Sleep(1 * time.Second)

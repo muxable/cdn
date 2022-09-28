@@ -2,10 +2,9 @@ package cdn
 
 import (
 	"context"
-	"errors"
 
 	"github.com/muxable/cdn/api"
-	"github.com/muxable/cdn/internal/signal"
+	"github.com/muxable/signal/pkg/signal"
 	"github.com/pion/webrtc/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -19,21 +18,26 @@ func NewClient(conn *grpc.ClientConn) (*Client, error) {
 	return &Client{grpcClient: api.NewCDNClient(conn)}, nil
 }
 
-func (c *Client) Publish(ctx context.Context, tl webrtc.TrackLocal) (string, error) {
+func (c *Client) Publish() (*webrtc.PeerConnection, error) {
 	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{URLs: []string{"stun:stun.l.google.com:19302"}},
 		},
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	signaller := signal.Negotiate(peerConnection)
+	signaller := signal.NewSignaller(peerConnection)
+
+	peerConnection.OnNegotiationNeeded(signaller.Renegotiate)
+
+	ctx, cancel := context.WithCancel(context.Background())
 
 	publish, err := c.grpcClient.Publish(ctx)
 	if err != nil {
-		return "", err
+		cancel()
+		return nil, err
 	}
 
 	go func() {
@@ -50,15 +54,15 @@ func (c *Client) Publish(ctx context.Context, tl webrtc.TrackLocal) (string, err
 		}
 	}()
 
-	output := make(chan string)
-	defer close(output)
-
 	peerConnection.OnSignalingStateChange(func(ss webrtc.SignalingState) {
 		zap.L().Debug("signaling state change", zap.String("state", ss.String()))
 	})
 
 	peerConnection.OnICEConnectionStateChange(func(c webrtc.ICEConnectionState) {
 		zap.L().Debug("ice connection state change", zap.String("state", c.String()))
+		if c == webrtc.ICEConnectionStateClosed {
+			cancel()
+		}
 	})
 
 	go func() {
@@ -68,49 +72,19 @@ func (c *Client) Publish(ctx context.Context, tl webrtc.TrackLocal) (string, err
 				return
 			}
 
-			switch operation := in.Operation.(type) {
-			case *api.PublishResponse_Track:
-				output <- operation.Track.Key
-			case *api.PublishResponse_Signal:
-				if err := signaller.WriteSignal(operation.Signal); err != nil {
-					zap.L().Error("failed to write signal", zap.Error(err))
-					return
-				}
-			}
-		}
-	}()
-
-	rtpSender, err := peerConnection.AddTrack(tl)
-	if err != nil {
-		return "", err
-	}
-
-	go func() {
-		buf := make([]byte, 1500)
-		for {
-			_, _, err := rtpSender.Read(buf)
-			if err != nil {
+			if err := signaller.WriteSignal(in.Signal); err != nil {
+				zap.L().Error("failed to write signal", zap.Error(err))
 				return
 			}
 		}
 	}()
 
-	tr := <-output
-	if err := publish.CloseSend(); err != nil {
-		return "", err
-	}
-	return tr, nil
+	return peerConnection, nil
 }
 
 type SubscriberConfiguration func(*api.SubscribeRequest_Subscription)
 
-type Subscription struct {
-	*webrtc.TrackRemote
-
-	Trace []string
-}
-
-func (c *Client) Subscribe(ctx context.Context, key string, options ...SubscriberConfiguration) (*Subscription, error) {
+func (c *Client) Subscribe(key string, options ...SubscriberConfiguration) (*webrtc.PeerConnection, error) {
 	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{URLs: []string{"stun:stun.l.google.com:19302"}},
@@ -120,10 +94,15 @@ func (c *Client) Subscribe(ctx context.Context, key string, options ...Subscribe
 		return nil, err
 	}
 
-	signaller := signal.Negotiate(peerConnection)
+	signaller := signal.NewSignaller(peerConnection)
+
+	peerConnection.OnNegotiationNeeded(signaller.Renegotiate)
+
+	ctx, cancel := context.WithCancel(context.Background())
 
 	subscribe, err := c.grpcClient.Subscribe(ctx)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 
@@ -143,25 +122,8 @@ func (c *Client) Subscribe(ctx context.Context, key string, options ...Subscribe
 		}
 	}()
 
-	trCh := make(chan *webrtc.TrackRemote, 1)
-	traceCh := make(chan []string, 1)
-
-	peerConnection.OnTrack(func(tr *webrtc.TrackRemote, r *webrtc.RTPReceiver) {
-		go func() {
-			buf := make([]byte, 1500)
-			for {
-				if _, _, err := r.Read(buf); err != nil {
-					return
-				}
-			}
-		}()
-
-		trCh <- tr
-	})
-
 	subscription := &api.SubscribeRequest_Subscription{
-		Key: key,
-		// TODO: include other fields.
+		StreamId: key,
 	}
 
 	for _, option := range options {
@@ -174,13 +136,18 @@ func (c *Client) Subscribe(ctx context.Context, key string, options ...Subscribe
 		},
 	}
 
+	peerConnection.OnICEConnectionStateChange(func(c webrtc.ICEConnectionState) {
+		zap.L().Debug("ice connection state change", zap.String("state", c.String()))
+		if c == webrtc.ICEConnectionStateClosed {
+			cancel()
+		}
+	})
+
 	if err := subscribe.Send(request); err != nil {
 		return nil, err
 	}
 
 	go func() {
-		defer close(trCh)
-		defer close(traceCh)
 		for {
 			in, err := subscribe.Recv()
 			if err != nil {
@@ -188,32 +155,11 @@ func (c *Client) Subscribe(ctx context.Context, key string, options ...Subscribe
 				return
 			}
 
-			switch operation := in.Operation.(type) {
-			case *api.SubscribeResponse_Track:
-				// assume this is the relevant track because we only added one per peer connection.
-				traceCh <- operation.Track.Trace
-			case *api.SubscribeResponse_Signal:
-				if err := signaller.WriteSignal(operation.Signal); err != nil {
-					return
-				}
+			if err := signaller.WriteSignal(in.Signal); err != nil {
+				return
 			}
 		}
 	}()
 
-	var tr *webrtc.TrackRemote
-	var trace []string
-	var ok bool
-	for tr == nil || trace == nil {
-		select {
-		case tr, ok = <-trCh:
-			if !ok {
-				return nil, errors.New("track not found")
-			}
-		case trace, ok = <-traceCh:
-			if !ok {
-				return nil, errors.New("track not found")
-			}
-		}
-	}
-	return &Subscription{TrackRemote: tr, Trace: trace}, nil
+	return peerConnection, nil
 }

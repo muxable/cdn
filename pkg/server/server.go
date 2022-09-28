@@ -2,11 +2,11 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"sync"
 	"time"
 
+	"cloud.google.com/go/firestore"
 	"github.com/muxable/cdn/api"
 	"github.com/muxable/cdn/internal/store"
 	"github.com/pion/webrtc/v3"
@@ -14,6 +14,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+
+	firebase "firebase.google.com/go/v4"
 )
 
 type Subscriber struct {
@@ -23,8 +25,8 @@ type Subscriber struct {
 
 type Configuration struct {
 	WebRTCConfiguration webrtc.Configuration
-	DHTStore            *store.DHTStore
 	LocalStore          *store.LocalTrackStore
+	Firestore           *firestore.Client
 	InboundAddress      string
 }
 
@@ -32,56 +34,34 @@ type CDNServer struct {
 	api.UnimplementedCDNServer
 	config Configuration
 
-	subscriberLock sync.Mutex
-	subscribers    map[string][]*Subscriber
+	linkedStreamIDs map[string]bool
+	streamMutex     sync.Mutex
 }
 
 func NewCDNServer(config Configuration) *CDNServer {
 	return &CDNServer{
 		config:      config,
-		subscribers: make(map[string][]*Subscriber),
+		linkedStreamIDs: make(map[string]bool),
 	}
 }
 
-func ServeCDN(host, port string, probe string) error {
-	addr := fmt.Sprintf("%s:%s", host, port)
-
+func ServeCDN(addr string) error {
 	grpcConn, err := net.Listen("tcp", addr)
-	if err != nil {
-		return err
-	}
-
-	dhtConn, err := net.ListenPacket("udp", addr)
-	if err != nil {
-		return err
-	}
-
-	udpAddr, err := net.ResolveUDPAddr("udp", "localhost:" + port)
-	if err != nil {
-		return err
-	}
-	
-	bootstrapAddrs := []*net.UDPAddr{udpAddr}
-	if probe != "" {
-		probeAddr, err := store.Probe(context.Background(), probe)
-		if err != nil {
-			zap.L().Warn("failed to probe", zap.String("probe", probe), zap.Error(err))
-		} else {
-			bootstrapAddrs = append(bootstrapAddrs, probeAddr)
-		}
-	}
-
-	dht, err := store.NewDHTStore(context.Background(), dhtConn, bootstrapAddrs...)
 	if err != nil {
 		return err
 	}
 
 	local := store.NewLocalTrackStore()
 
-	inboundAddr, err := store.GetLocalAddress()
+	app, err := firebase.NewApp(context.Background(), &firebase.Config{ProjectID: "rtirl-a1d7f"})
 	if err != nil {
 		return err
 	}
+	client, err := app.Firestore(context.Background())
+	if err != nil {
+		return err
+	}
+	defer client.Close()
 
 	grpcServer := grpc.NewServer()
 
@@ -91,9 +71,9 @@ func ServeCDN(host, port string, probe string) error {
 				{URLs: []string{"stun:stun.l.google.com:19302"}},
 			},
 		},
-		DHTStore:       dht,
+		Firestore:      client,
 		LocalStore:     local,
-		InboundAddress: fmt.Sprintf("%s:%s", inboundAddr, port),
+		InboundAddress: addr,
 	}))
 	grpc_health_v1.RegisterHealthServer(grpcServer, health.NewServer())
 

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"os"
 
 	"github.com/blendle/zapdriver"
@@ -18,9 +17,6 @@ func logger() (*zap.Logger, error) {
 }
 
 func main() {
-	probe := flag.String("probe", "", "probe address")
-	flag.Parse()
-
 	logger, err := logger()
 	if err != nil {
 		panic(err)
@@ -34,7 +30,7 @@ func main() {
 		port = "50051"
 	}
 
-	if err := server.ServeCDN("", port, *probe); err != nil {
+	if err := server.ServeCDN("0.0.0.0:50051"); err != nil {
 		panic(err)
 	}
 }

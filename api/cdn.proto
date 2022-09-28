@@ -2,83 +2,35 @@ syntax = "proto3";
 
 option go_package = "github.com/muxable/cdn/api";
 
-import "google/protobuf/duration.proto";
-import "google/protobuf/empty.proto";
+import "google/protobuf/any.proto";
 
 package api;
 
 service CDN {
-  rpc Resolve(google.protobuf.Empty) returns (ResolveResponse) {}
-  rpc Traverse(TraverseRequest) returns (TraverseResponse) {}
   rpc Publish(stream PublishRequest) returns (stream PublishResponse) {}
   rpc Subscribe(stream SubscribeRequest) returns (stream SubscribeResponse) {}
 }
 
-message ResolveRequest {
-}
-
-message ResolveResponse {
-  string cname = 1; // the canonical hostname, used for identifying the server behind an anycast IP.
-}
-
-message TraverseRequest {
-  string stream_id = 1;
-}
-
-message TraverseResponse {
-  message Subscriber {
-    string cname = 1;
-    google.protobuf.Duration latency = 2;
-  }
-
-  repeated Subscriber subscribers = 1;
-  int64 requested_max_subscribers = 2; // the requested max number of subscribers.
-}
-
-message Signal {
-  oneof payload {
-    string offer_sdp = 1;
-    string answer_sdp = 2;
-    string trickle = 3;
-  }
-}
-
-message Track {
-  string id = 1;
-  string stream_id = 2;
-  string rtp_stream_id = 3;
-  string key = 4;
-  // for debugging, this is the path through the DHT taken to send this track.
-  repeated string trace = 5;
-}
-
 message SubscribeRequest {
   message Subscription {
-    string key = 1;  // subscribe to a published stream id.
-    string cname = 2; // the canonical hostname of the subscriber that the server will forward on for verifications.
-    google.protobuf.Duration reported_latency = 3; // the estimated half RTT latency of the subscriber.
+    string stream_id = 1;  // subscribe to a published stream id.
+    string inbound_address = 2;  // the inbound address so others can subscribe to us. 
   }
 
   oneof operation {
     Subscription subscription = 1;
-    Signal signal = 2;     // WebRTC signalling.
+    google.protobuf.Any signal = 2;     // WebRTC signalling.
   }
 }
 
 message SubscribeResponse {
-  oneof operation {
-    Track track = 1;
-    Signal signal = 2;
-  }
+  google.protobuf.Any signal = 1;
 }
 
 message PublishRequest {
-    Signal signal = 1;
+  google.protobuf.Any signal = 1;
 }
 
 message PublishResponse {
-    oneof operation {
-        Track track = 1;
-        Signal signal = 2;
-    }
+  google.protobuf.Any signal = 1;
 }

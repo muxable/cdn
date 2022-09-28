@@ -1,12 +1,13 @@
 package store
 
 import (
+	"context"
 	"sync"
-	"time"
 
 	"github.com/pion/rtp"
 	"github.com/pion/rtpio/pkg/rtpio"
 	"github.com/pion/webrtc/v3"
+	"go.uber.org/zap"
 )
 
 type TrackRemoteReader struct {
@@ -62,69 +63,89 @@ type TrackRemote struct {
 	*webrtc.TrackRemote
 	multicaster *Multicaster
 
-	Latency time.Duration
 	Trace   []string
 }
 
 type TrackLocal struct {
 	*webrtc.TrackLocalStaticRTP
 
-	Latency time.Duration
 	Trace   []string
+}
+
+type Subscription struct {
+	ch chan *TrackLocal
+	StreamID string
 }
 
 // LocalTrackStore is a track store that stores tracks in memory.
 type LocalTrackStore struct {
 	sync.RWMutex
 
-	tracks map[string]*TrackRemote
+	tracks        []*TrackRemote
+	subscriptions []*Subscription
 }
 
 func NewLocalTrackStore() *LocalTrackStore {
-	return &LocalTrackStore{
-		tracks: make(map[string]*TrackRemote),
-	}
+	return &LocalTrackStore{}
 }
 
-func (s *LocalTrackStore) GetLatency(key string) (time.Duration, error) {
+func (s *LocalTrackStore) Subscribe(ctx context.Context, streamID string) chan *TrackLocal {
 	s.RLock()
 	defer s.RUnlock()
 
-	track, ok := s.tracks[key]
-	if !ok {
-		return 0, ErrNotFound
+	ch := make(chan *TrackLocal)
+
+	for _, tr := range s.tracks {
+		if tr.StreamID() == streamID {
+			tl, err := webrtc.NewTrackLocalStaticRTP(tr.Codec().RTPCodecCapability, tr.ID(), tr.StreamID(), webrtc.WithRTPStreamID(tr.RID()))
+			if err != nil {
+				continue
+			}
+			tr.multicaster.WriteTo(tl)
+			go func ()  {
+				ch <- &TrackLocal{TrackLocalStaticRTP: tl, Trace: tr.Trace}
+			}()
+		}
 	}
-	return track.Latency, nil
+	s.subscriptions = append(s.subscriptions, &Subscription{ch: ch, StreamID: streamID})
+	go func() {
+		<-ctx.Done()
+		s.Lock()
+		defer s.Unlock()
+		for i, sub := range s.subscriptions {
+			if sub.ch == ch {
+				s.subscriptions = append(s.subscriptions[:i], s.subscriptions[i+1:]...)
+			}
+		}
+		close(ch)
+	}()
+	return ch
 }
 
-func (s *LocalTrackStore) Get(key string) (*TrackLocal, error) {
-	s.RLock()
-	defer s.RUnlock()
-
-	tr, ok := s.tracks[key]
-	if !ok {
-		return nil, ErrNotFound
-	}
-	tl, err := webrtc.NewTrackLocalStaticRTP(tr.Codec().RTPCodecCapability, tr.ID(), tr.StreamID(), webrtc.WithRTPStreamID(tr.RID()))
-	if err != nil {
-		return nil, err
-	}
-	tr.multicaster.WriteTo(tl)
-	return &TrackLocal{
-		TrackLocalStaticRTP: tl,
-		Latency:             tr.Latency,
-		Trace:               tr.Trace,
-	}, nil
-}
-
-func (s *LocalTrackStore) Put(key string, track *TrackRemote) error {
+func (s *LocalTrackStore) AddTrack(track *TrackRemote) error {
 	s.Lock()
 	defer s.Unlock()
 
-	if _, ok := s.tracks[key]; ok {
-		return ErrAlreadyExists
-	}
 	track.multicaster = NewMulticaster(&TrackRemoteReader{TrackRemote: track.TrackRemote})
-	s.tracks[key] = track
+	for _, sub := range s.subscriptions {
+		if sub.StreamID == track.StreamID() {
+			tl, err := webrtc.NewTrackLocalStaticRTP(track.Codec().RTPCodecCapability, track.ID(), track.StreamID(), webrtc.WithRTPStreamID(track.RID()))
+			if err != nil {
+				return err
+			}
+			track.multicaster.WriteTo(tl)
+			sub.ch <- &TrackLocal{TrackLocalStaticRTP: tl, Trace: track.Trace}
+		}
+	}
+	s.tracks = append(s.tracks, track)
 	return nil
+}
+
+func (s *LocalTrackStore) AddPublisher(pc *webrtc.PeerConnection) {
+	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+		if err := s.AddTrack(&TrackRemote{TrackRemote: track}); err != nil {
+			zap.L().Error("failed to add track", zap.Error(err))
+			return
+		}
+	})
 }

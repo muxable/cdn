@@ -1,11 +1,11 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"log"
 
 	"github.com/muxable/cdn/pkg/cdn"
+	"github.com/pion/webrtc/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -13,7 +13,6 @@ import (
 
 func main() {
 	addr := flag.String("addr", "", "destination address")
-	key := flag.String("key", "", "key")
 	flag.Parse()
 
 	logger, err := zap.NewDevelopment()
@@ -33,18 +32,20 @@ func main() {
 		panic(err)
 	}
 
-	tr, err := client.Subscribe(context.Background(), *key)
+	pc, err := client.Subscribe("pion")
 	if err != nil {
 		panic(err)
 	}
 
-	log.Printf("%+v", tr.Trace)
-
-	for {
-		p, _, err := tr.ReadRTP()
-		if err != nil {
-			panic(err)
+	pc.OnTrack(func(tr *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+		for {
+			p, _, err := tr.ReadRTP()
+			if err != nil {
+				panic(err)
+			}
+			log.Printf("received %d bytes", p.MarshalSize())
 		}
-		log.Printf("received %d bytes", p.MarshalSize())
-	}
+	})
+
+	select{}
 }

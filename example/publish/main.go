@@ -1,9 +1,9 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"io"
+	"log"
 	"os"
 	"time"
 
@@ -42,14 +42,16 @@ func main() {
 		panic(err)
 	}
 
-	go func() {
-		key, err := client.Publish(context.Background(), tl)
-		if err != nil {
-			panic(err)
-		}
+	pc, err := client.Publish()
+	if err != nil {
+		panic(err)
+	}
 
-		zap.L().Info("received key", zap.String("key", key))
-	}()
+	if _, err := pc.AddTrack(tl); err != nil {
+		panic(err)
+	}
+	
+	log.Printf("publishing")
 
 	// Open a IVF file and start reading using our IVFReader
 	file, err := os.Open("test/input.ivf")

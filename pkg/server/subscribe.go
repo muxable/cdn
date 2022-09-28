@@ -1,17 +1,61 @@
 package server
 
 import (
-	"fmt"
+	"context"
+	"errors"
 
 	"github.com/muxable/cdn/api"
-	"github.com/muxable/cdn/internal/signal"
-	"github.com/muxable/cdn/internal/store"
 	"github.com/muxable/cdn/pkg/cdn"
+	"github.com/muxable/signal/pkg/signal"
 	"github.com/pion/webrtc/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+func (s *CDNServer) relay(ctx context.Context, streamID string) error {
+	// fetch the publisher address from firestore.
+	snapshot, err := s.config.Firestore.Collection("streams").Doc(streamID).Get(ctx)
+	if err != nil {
+		return err
+	}
+	if !snapshot.Exists() || snapshot.Data()["publisher"] == nil {
+		return errors.New("stream does not exist")
+	}
+	publisher := snapshot.Data()["publisher"].(string)
+
+	if publisher == s.config.InboundAddress {
+		return nil
+	}
+
+	// connect to the publisher.
+	conn, err := grpc.Dial(publisher, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return err
+	}
+
+	client, err := cdn.NewClient(conn)
+	if err != nil {
+		return err
+	}
+
+	// subscribe to the publisher.
+	publisherPeerConnection, err := client.Subscribe(streamID)
+	if err != nil {
+		return err
+	}
+
+	// add the publisher to the local store.
+	s.config.LocalStore.AddPublisher(publisherPeerConnection)
+
+	publisherPeerConnection.OnConnectionStateChange(func(pcs webrtc.PeerConnectionState) {
+		if pcs == webrtc.PeerConnectionStateClosed {
+			conn.Close()
+		}
+	})
+
+	return nil
+}
 
 func (s *CDNServer) Subscribe(conn api.CDN_SubscribeServer) error {
 	peerConnection, err := webrtc.NewPeerConnection(s.config.WebRTCConfiguration)
@@ -19,7 +63,9 @@ func (s *CDNServer) Subscribe(conn api.CDN_SubscribeServer) error {
 		return err
 	}
 
-	signaller := signal.Negotiate(peerConnection)
+	signaller := signal.NewSignaller(peerConnection)
+
+	peerConnection.OnNegotiationNeeded(signaller.Renegotiate)
 
 	go func() {
 		for {
@@ -28,9 +74,7 @@ func (s *CDNServer) Subscribe(conn api.CDN_SubscribeServer) error {
 				zap.L().Error("failed to read signal", zap.Error(err))
 				return
 			}
-			if err := conn.Send(&api.SubscribeResponse{
-				Operation: &api.SubscribeResponse_Signal{Signal: signal},
-			}); err != nil {
+			if err := conn.Send(&api.SubscribeResponse{Signal: signal}); err != nil {
 				zap.L().Error("failed to send signal", zap.Error(err))
 				return
 			}
@@ -46,80 +90,35 @@ func (s *CDNServer) Subscribe(conn api.CDN_SubscribeServer) error {
 
 		switch operation := in.Operation.(type) {
 		case *api.SubscribeRequest_Subscription_:
-			key := operation.Subscription.Key
-			tl, err := s.config.LocalStore.Get(key)
-			if err != nil {
-				if err != store.ErrNotFound {
-					return err
+			// if the stream id is not linked on this server, subscribe to the publisher.
+			s.streamMutex.Lock()
+			if !s.linkedStreamIDs[operation.Subscription.StreamId] {
+				if err := s.relay(context.Background(), operation.Subscription.StreamId); err != nil {
+					zap.L().Error("failed to relay", zap.Error(err))
+					s.streamMutex.Unlock()
+					return nil
 				}
-				publisher, err := s.config.DHTStore.Get(key)
-				if err != nil {
-					return err
-				}
-
-				leechFrom, err := store.ResolveLeech(conn.Context(), publisher, key)
-				if err != nil {
-					return err
-				}
-
-				// create a new peer connection and send a new subscribe request to the leech target.
-				leechConn, err := grpc.Dial(leechFrom.LeecherAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-				if err != nil {
-					return err
-				}
-				client, err := cdn.NewClient(leechConn)
-				if err != nil {
-					return err
-				}
-
-				tr, err := client.Subscribe(conn.Context(), key)
-				if err != nil {
-					return err
-				}
-
-				// put it in the local store.
-				if err := s.config.LocalStore.Put(key, &store.TrackRemote{
-					TrackRemote: tr.TrackRemote,
-					Latency:     leechFrom.IncrementalLatency + leechFrom.PublisherLatency,
-					Trace:       tr.Trace,
-				}); err != nil {
-					return err
-				}
-
-				// load our new track.
-				tl, err = s.config.LocalStore.Get(key)
-				if err != nil {
-					return err
-				}
+				s.linkedStreamIDs[operation.Subscription.StreamId] = true
 			}
-
-			rtpSender, err := peerConnection.AddTrack(tl)
-			if err != nil {
-				return err
-			}
+			s.streamMutex.Unlock()
 
 			go func() {
-				for {
-					if _, _, err := rtpSender.ReadRTCP(); err != nil {
+				for tl := range s.config.LocalStore.Subscribe(conn.Context(), operation.Subscription.StreamId) {
+					rtpSender, err := peerConnection.AddTrack(tl)
+					if err != nil {
+						zap.L().Error("failed to add track", zap.Error(err))
 						return
 					}
+
+					go func() {
+						for {
+							if _, _, err := rtpSender.ReadRTCP(); err != nil {
+								return
+							}
+						}
+					}()
 				}
 			}()
-
-			// then notify the subscription on the signalling channel.
-			if err := conn.Send(&api.SubscribeResponse{
-				Operation: &api.SubscribeResponse_Track{
-					Track: &api.Track{
-						Id:          tl.ID(),
-						StreamId:    tl.StreamID(),
-						RtpStreamId: tl.RID(),
-						Key:         key,
-						Trace:       append(tl.Trace, fmt.Sprintf("%s[%s]", s.config.InboundAddress, store.GetTag())),
-					},
-				},
-			}); err != nil {
-				return err
-			}
 
 		case *api.SubscribeRequest_Signal:
 			if err := signaller.WriteSignal(operation.Signal); err != nil {
